@@ -18,6 +18,7 @@
 #include "application.h"
 #include "temperature.h"
 #include "connection.h"
+#include "ble.h"
 
 #include "location_tracking.h"
 #include "led_control.h"
@@ -107,6 +108,38 @@ static int send_sensor_sample(const char *const sensor, double value)
 
 	/* Populate the container object with the sensor value. */
 	if (cJSON_AddNumberToObject(msg_obj, NRF_CLOUD_JSON_DATA_KEY, value) == NULL) {
+		ret = -ENOMEM;
+		LOG_ERR("Failed to append value to %s sample container object ",
+			sensor);
+		goto cleanup;
+	}
+
+	/* Send the sensor sample container object as a device message. */
+	ret = send_device_message_cJSON(msg_obj);
+
+cleanup:
+	if (msg_obj) {
+		cJSON_Delete(msg_obj);
+	}
+	return ret;
+}
+
+static int send_string(const char *const sensor, const char *const value)
+{
+	int ret = 0;
+
+	/* Create a timestamped message container object for the sensor sample. */
+	cJSON *msg_obj = create_timestamped_device_message(
+		sensor, NRF_CLOUD_JSON_MSG_TYPE_VAL_DATA
+	);
+
+	if (msg_obj == NULL) {
+		ret = -EINVAL;
+		goto cleanup;
+	}
+
+	/* Populate the container object with the sensor value. */
+	if (cJSON_AddStringToObject(msg_obj, NRF_CLOUD_JSON_DATA_KEY, value) == NULL) {
 		ret = -ENOMEM;
 		LOG_ERR("Failed to append value to %s sample container object ",
 			sensor);
@@ -271,7 +304,6 @@ static void handle_at_cmd_requests(const char *const msg)
 		NRF_CLOUD_JSON_APPID_VAL_MODEM,
 		NRF_CLOUD_JSON_MSG_TYPE_VAL_DATA
 	);
-
 	if (!msg_obj) {
 		return;
 	}
@@ -316,6 +348,22 @@ static void monitor_temperature(double temp)
 	}
 }
 
+static uint8_t nus_tx_data[32];
+static uint16_t nus_tx_data_len;
+static bool data_received = false;
+
+static void on_ble_received(const uint8_t *data, uint16_t length)
+{
+	static uint8_t buf[32];
+	memcpy(buf, data, length);
+	buf[length] = 0;
+	LOG_INF("Data received (%i bytes): %s", length, buf);
+
+	strcpy(nus_tx_data, buf);
+	nus_tx_data_len = strlen(nus_tx_data);
+	data_received = true;
+}
+
 void main_application_thread_fn(void)
 {
 	if (IS_ENABLED(CONFIG_AT_CMD_REQUESTS)) {
@@ -324,6 +372,8 @@ void main_application_thread_fn(void)
 		 */
 		register_general_dev_msg_handler(handle_at_cmd_requests);
 	}
+
+	ble_init(on_ble_received);
 
 	/* Wait for first connection before starting the application. */
 	(void)await_connection(K_FOREVER);
@@ -366,6 +416,11 @@ void main_application_thread_fn(void)
 
 				monitor_temperature(temp);
 			}
+		}
+
+		if (data_received) {
+			data_received = false;
+			send_string("NUS", nus_tx_data);
 		}
 
 		if (IS_ENABLED(CONFIG_TEST_COUNTER)) {

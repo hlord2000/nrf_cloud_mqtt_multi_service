@@ -71,6 +71,13 @@ config MESSAGE_THREAD_STACK_SIZE
 	  Sets the stack size (in bytes) for the message queue processing
 	  thread of the sample.
 
+config BLE_THREAD_STACK_SIZE
+	int "BLE Stack Size (bytes)"
+	default 2048
+	help
+	  Sets the stack size (in bytes) for the BLE processing 
+	  thread of the sample.
+
 config LED_THREAD_STACK_SIZE
 	int "LED Thread Stack Size (bytes)"
 	default 512
